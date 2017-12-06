@@ -5,8 +5,8 @@ Compile with kernel 4.14 mainline.
 
 Does not support Devicetree for now (you must put resolution, irq and wakeup pin in code).
 
-$$
-Put folder tc1126 in  $kernelpath/drivers/input/touchscreen/$
+
+Put folder tc11c126 in  $kernelpath/drivers/input/touchscreen/
 
 add: 
 
