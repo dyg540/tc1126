@@ -1,16 +1,13 @@
 /*
  * Report_Coordinate
-
- * SPI_write_DATAs
  */
 #include "include/CN1100_common.h"
 #include "include/CN1100_linux.h"
 #include "include/CN1100_Function.h"
-
-int SCREEN_HIGH = 800;
-int SCREEN_WIDTH = 480;
-int CN1100_RESET_PIN = -1;
-int CN1100_INT_PIN = -1;
+int SCREEN_HIGH = 1024;
+int SCREEN_WIDTH = 600;
+int CN1100_RESET_PIN = 225;//PH
+int CN1100_INT_PIN = 37;//PB05
 
 static struct i2c_board_info tc1126_board_info[] __initdata = {
 	{
@@ -19,12 +16,12 @@ static struct i2c_board_info tc1126_board_info[] __initdata = {
 };
 
 
-static int screen_max_x = 0;
-static int screen_max_y = 0;
-static int revert_x_flag = 0;
-static int revert_y_flag = 0;
+static int screen_max_x = 1024;
+static int screen_max_y = 600;
+static int revert_x_flag = 1;
+//static int revert_y_flag = 1;
 static int twi_id = 0;
-static int exchange_x_y_flag = 0;
+//static int exchange_x_y_flag = 1;
 
 //#define CTP_HAVE_TOUCH_KEY
 #ifdef CTP_HAVE_TOUCH_KEY
@@ -283,91 +280,38 @@ void report_key(int X,int Y,int id)
     }
 }
 #endif
-
+static int irqcalls=0;
 void Report_Coordinate_Wait4_SingleTime(int id,int X, int Y)
 {
     Y  = (uint16_t)(( ((uint32_t)Y) * RECV_SCALE )>>16);
     X  = (uint16_t)(( ((uint32_t)X) * XMTR_SCALE )>>16);
-
+    
     if(X > 0 || Y > 0){ 
-#ifdef CTP_HAVE_TOUCH_KEY
-        if(Y>=chm_ts_keys[0].ymin&&Y<=chm_ts_keys[0].ymax){
-            report_key(X,Y,id);    
-            return;
-        }
-        if(touch_key_pressed){
-            return;
-        }
-#endif
-
+        X  = revert_x_flag ?  screen_max_x - X  : X;
         input_report_abs(spidev->dev, ABS_MT_TRACKING_ID,id);
-        //input_report_abs(spidev->dev, ABS_MT_TOUCH_MAJOR, 5); 
+        //input_report_abs(spidev->dev, ABS_MT_TOUCH_MAJOR, 5);
+        input_mt_slot(spidev->dev, id);
+        input_mt_report_slot_state(spidev->dev, MT_TOOL_FINGER, true); 
         input_report_abs(spidev->dev, ABS_MT_POSITION_X, X);
         input_report_abs(spidev->dev, ABS_MT_POSITION_Y, Y); 
         input_report_abs(spidev->dev, ABS_X, X);
         input_report_abs(spidev->dev, ABS_Y, Y); 
         //input_report_abs(spidev->dev, ABS_MT_WIDTH_MAJOR, 5); 
-    }else{
-    input_mt_sync(spidev->dev);
+        CN1100_print("IrqCalls %d\n",irqcalls);
 
-#ifdef CTP_HAVE_TOUCH_KEY
-        if(key_pressed[id]){
-            input_report_key(spidev->dev,key_pressed[id],0);
-            input_sync((spidev->dev));
-            key_pressed[id] = 0;
-            touch_key_pressed = 0;
-        }
-#endif
+    }else{
+    //input_mt_sync(spidev->dev);  TODO ???
     }   
 }
 uint16_t FingProc_Dist2PMeasure(int16_t x1, int16_t y1, int16_t x2, int16_t y2);
+
+
 void Report_Coordinate()
 {
     int fnum = FINGER_NUM_MAX;
-    int X=0, Y=0, i, count;
-    int Wait4Flag = 0;
+    int X=0, Y=0, i;
 
-    for(i=0; i<fnum; i++) {
-        if(bdt.DPD[i].JustPassStateFlag4) Wait4Flag = 1;
-    }
 
-    if(Wait4Flag)
-    {
-        int LongEnoughFlag = 0;
-        for(i=0; i<fnum; i++)
-        {
-            if(bdt.DPD[i].JustPassStateFlag4)
-            {
-                if(FingProc_Dist2PMeasure(bdt.DPD[i].Prev_Finger_X[3], bdt.DPD[i].Prev_Finger_Y[3], bdt.DPD[i].Prev_Finger_X[0], bdt.DPD[i].Prev_Finger_Y[0]) > 100)
-                    LongEnoughFlag = 3;  // 4 points should be reported
-
-            }
-        }
-
-        //*************************************
-        // Report Old 4 Point with others
-        //*************************************
-        for(count=LongEnoughFlag; count>=0; count--)
-        {
-            for(i=0; i<fnum; i++)
-            {
-
-                if(bdt.DPD[i].JustPassStateFlag4)
-                {
-                    Y  = bdt.DPD[i].Prev_Finger_Y[count];
-                    X  = bdt.DPD[i].Prev_Finger_X[count];
-                }
-                else
-                {
-                    Y  = bdt.DPD[i].Finger_Y_Reported; // Y -> RECV (480)
-                    X  = bdt.DPD[i].Finger_X_Reported; // X -> XTMR (800) 
-                }
-                Report_Coordinate_Wait4_SingleTime(i,X, Y);
-            }
-            input_sync(spidev->dev);
-            mdelay(1);
-        }
-    }
 
     //*************************************
     // Report Old 4 Point with others
@@ -376,8 +320,28 @@ void Report_Coordinate()
     {    
         Y  = bdt.DPD[i].Finger_Y_Reported; // Y -> RECV (480)
         X  = bdt.DPD[i].Finger_X_Reported; // X -> XTMR (800) 
-        Report_Coordinate_Wait4_SingleTime(i,X, Y);
+        //Report_Coordinate_Wait4_SingleTime(i,X, Y);
+        Y  = (uint16_t)(( ((uint32_t)Y) * RECV_SCALE )>>16);
+        X  = (uint16_t)(( ((uint32_t)X) * XMTR_SCALE )>>16);
+        if(X > 0 || Y > 0){ 
+            X  = revert_x_flag ?  screen_max_x - X  : X;
+            //input_report_abs(spidev->dev, ABS_MT_TRACKING_ID,i);
+            //input_report_abs(spidev->dev, ABS_MT_TOUCH_MAJOR, 5);
+            input_mt_slot(spidev->dev, i);
+            input_mt_report_slot_state(spidev->dev, MT_TOOL_FINGER, true); 
+            input_report_abs(spidev->dev, ABS_MT_POSITION_X, X);
+            input_report_abs(spidev->dev, ABS_MT_POSITION_Y, Y); 
+            input_report_abs(spidev->dev, ABS_X, X);
+            input_report_abs(spidev->dev, ABS_Y, Y); 
+            //input_report_abs(spidev->dev, ABS_MT_WIDTH_MAJOR, 5); 
+            CN1100_print("IrqCalls %d\n",irqcalls);
+
+            }else{
+                //input_mt_sync(spidev->dev);  TODO ???
+            }   
+
     }
+    input_mt_sync_frame(spidev->dev);
     input_sync(spidev->dev);
 }
 
@@ -397,10 +361,11 @@ static irqreturn_t cn1100_irq_handler(int irq, void *dev_id)
         }   
 #endif
         queue_work(spidev->workqueue,&spidev->main);
-    }   
+    }
+    irqcalls++;   
     return IRQ_RETVAL(IRQ_HANDLED);
 }
-#ifdef DEBUG_PROC_USED
+/*#ifdef DEBUG_PROC_USED
 static int chm_proc_open(struct inode *inode, struct file *file)
 {
     return 0;
@@ -418,7 +383,7 @@ static const struct file_operations chm_proc_fops = {
     .write      = chm_proc_write,
     .release    = chm_proc_release,
 };
-#endif
+#endif*/
 
 
 static int chm_ts_probe(struct i2c_client *client, const struct i2c_device_id *id)
@@ -466,20 +431,27 @@ static int chm_ts_probe(struct i2c_client *client, const struct i2c_device_id *i
     set_bit(EV_KEY, spidev->dev->evbit);       
     set_bit(BTN_TOUCH, spidev->dev->keybit); //add
 
-    set_bit(ABS_MT_TOUCH_MAJOR, spidev->dev->absbit);
+    
+    set_bit(ABS_X, spidev->dev->absbit);
+    set_bit(ABS_Y, spidev->dev->absbit); 
+    set_bit(ABS_MT_SLOT, spidev->dev->absbit); 
+    //set_bit(ABS_MT_TOUCH_MAJOR, spidev->dev->absbit);
     set_bit(ABS_MT_POSITION_X, spidev->dev->absbit);
     set_bit(ABS_MT_POSITION_Y, spidev->dev->absbit);   
  
         
-    set_bit(ABS_MT_WIDTH_MAJOR, spidev->dev->absbit);                     
-    set_bit(ABS_MT_TRACKING_ID,spidev->dev->absbit);
-
+    //set_bit(ABS_MT_WIDTH_MAJOR, spidev->dev->absbit);                     
+    //set_bit(ABS_MT_TRACKING_ID,spidev->dev->absbit);
+    CN1100_print("Max x %d Max y %d \n",screen_max_x,screen_max_y);
     input_set_abs_params(spidev->dev, ABS_MT_POSITION_X, 0, screen_max_x, 0, 0);  
     input_set_abs_params(spidev->dev, ABS_MT_POSITION_Y, 0, screen_max_y, 0, 0);  
-    input_set_abs_params(spidev->dev, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
-    input_set_abs_params(spidev->dev, ABS_MT_WIDTH_MAJOR, 0, 200, 0, 0); 
+    input_set_abs_params(spidev->dev, ABS_X, 0, screen_max_x, 0, 0);  
+    input_set_abs_params(spidev->dev, ABS_Y, 0, screen_max_y, 0, 0);  
+    //input_set_abs_params(spidev->dev, ABS_MT_TOUCH_MAJOR, 0, 255, 0, 0);
+    //input_set_abs_params(spidev->dev, ABS_MT_WIDTH_MAJOR, 0, 200, 0, 0); 
 
-
+    input_mt_init_slots(spidev->dev,5 , INPUT_MT_DIRECT | INPUT_MT_DROP_UNUSED |
+			    INPUT_MT_TRACK);
     spidev->dev->name = "tc1126_ts";
     spidev->dev->phys = "input/ts";
     spidev->dev->id.bustype = BUS_I2C;
@@ -503,7 +475,7 @@ static int chm_ts_probe(struct i2c_client *client, const struct i2c_device_id *i
     }
     /*Related to specified hardware*/
     if(spidev->mode & CN1100_USE_IRQ){
-        spidev->irq = gpio_to_irq(37); //PB05
+        spidev->irq = gpio_to_irq(CN1100_INT_PIN); 
         //-     config_info.dev = &(spidev->dev->dev);
         //		status = input_request_int(&(config_info.input_type),cn1100_irq_handler,IRQF_TRIGGER_HIGH,spidev);
         status = request_irq(spidev->irq,cn1100_irq_handler,IRQF_TRIGGER_HIGH ,"cn1100-interrup", NULL);
@@ -514,12 +486,12 @@ static int chm_ts_probe(struct i2c_client *client, const struct i2c_device_id *i
 
     }
 
-#ifdef DEBUG_PROC_USED
+/*#ifdef DEBUG_PROC_USED
     spidev->chm_ts_proc = proc_create("tc1126_ts",0666,NULL,&chm_proc_fops);
     if(!spidev->chm_ts_proc){
         CN1100_print("Error to create debug entry\n");
     }
-#endif
+#endif*/
 
 
     hrtimer_start(&spidev->systic, ktime_set(0, SCAN_SYSTIC_INTERVAL), HRTIMER_MODE_REL);
@@ -672,7 +644,7 @@ static struct i2c_driver chm_ts_driver = {
     CN1100_print("info.wakeup_gpio_number:%d\n",info.wakeup_gpio.gpio);
 } */   
 
-static int ctp_get_system_config(void) //TODO Porting to device three nedded
+/*static int ctp_get_system_config(void) //TODO Porting to device three nedded
 {
     //ctp_print_info(config_info);
 
@@ -690,7 +662,7 @@ static int ctp_get_system_config(void) //TODO Porting to device three nedded
         return 0;
     }
     return 1;
-}
+}*/
 
 /**
  * ctp_init_platform_resource - initialize platform related resource
